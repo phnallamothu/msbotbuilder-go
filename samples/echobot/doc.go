@@ -1,6 +1,6 @@
 /*
 Bot Framework echo bot sample.
-This bot uses msbotbuilder-go: https://github.com/infracloudio/msbotbuilder-go. It shows
+This bot uses msbotbuilder-go: https://github.com/phnallamothu/msbotbuilder-go. It shows
 how to create a simple bot that accepts input from the user and echoes it back.
 
 # Run the example
@@ -14,25 +14,18 @@ your BotFramework app_id and password. Then, run:
 
 # Understanding the example
 
-The program starts by creating a hanlder struct of type `activity.HandlerFuncs`.
-This struct contains defination for the `OnMessageFunc` field which is a treated as a callback by the library
-on the respective event.
+The program starts by creating a handler function that will be called when a message is received.
+This function takes a TurnContext parameter and returns an error.
 
-	var customHandler = activity.HandlerFuncs{
-		OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-			return turn.SendActivity(activity.MsgOptionText("Echo: " + turn.Activity.Text))
-		},
+	var customHandler = func(turn *activity.TurnContext) error {
+		_, err := turn.SendActivity(activity.WithText("Echo: " + turn.Activity.Text))
+		return err
 	}
 
-A webserver is started with a hanlder passed the received payload to `adapter.ParseRequest`
-This methods authenticates the payload, parses the request and returns an Activity value.
+A webserver is started with a handler that passes the received HTTP request directly to `adapter.ProcessActivity`
+This method authenticates the payload, parses the request, creates a TurnContext, and calls the handler function.
 
-	activity, err := adapter.ParseRequest(ctx, req)
-
-The Activity is then passed to `adapter.ProcessActivity` with the hanlder created to process
-the activity as per the hanlder functions and send the response to the connector service.
-
-	err = adapter.ProcessActivity(ctx, activity, customHandler)
+	err := ht.Adapter.ProcessActivity(w, req, customHandler)
 
 # In case of no error, this web responds with a 200 status
 

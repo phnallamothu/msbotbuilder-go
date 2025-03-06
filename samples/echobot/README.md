@@ -1,6 +1,6 @@
 # Bot Framework echo bot sample.
 
-This Microsoft Teams bot uses the [msbotbuilder-go](https://github.com/infracloudio/msbotbuilder-go) library. It shows how to create a simple bot that accepts input from the user and echoes it back.
+This Microsoft Teams bot uses the [msbotbuilder-go](https://github.com/phnallamothu/msbotbuilder-go) library. It shows how to create a simple bot that accepts input from the user and echoes it back.
 
 ## Run the example
 

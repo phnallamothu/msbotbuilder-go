@@ -1,6 +1,6 @@
 # Bot Framework Proactive Message Sample
 
-This Microsoft Teams bot example uses the [msbotbuilder-go](https://github.com/infracloudio/msbotbuilder-go) library. It shows how to create a simple bot that sets conversation reference and sends proactive messages from Bot to user.
+This Microsoft Teams bot example uses the [msbotbuilder-go](https://github.com/phnallamothu/msbotbuilder-go) library. It shows how to create a simple bot that sets conversation reference and sends proactive messages from Bot to user.
 
 ## Run the example
 

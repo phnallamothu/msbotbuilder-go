@@ -1,179 +1,238 @@
-// Copyright (c) 2020 InfraCloud Technologies
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-package core_test
+package core
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"testing"
 
-	"github.com/infracloudio/msbotbuilder-go/connector/auth"
-	"github.com/infracloudio/msbotbuilder-go/connector/client"
-	"github.com/infracloudio/msbotbuilder-go/core"
-	"github.com/infracloudio/msbotbuilder-go/core/activity"
-	"github.com/infracloudio/msbotbuilder-go/schema"
-
+	"github.com/phnallamothu/msbotbuilder-go/connector/auth"
+	"github.com/phnallamothu/msbotbuilder-go/schema"
 	"github.com/stretchr/testify/assert"
 )
 
-func serverMock(t *testing.T) *httptest.Server {
-	handler := http.NewServeMux()
-	handler.HandleFunc("/v3/conversations/abcd1234/activities", msTeamsMockMock)
-	h1 := &msTeamsActivityUpdateMock{t: t}
-	handler.Handle("/v3/conversations/TestActivityUpdate/activities", h1)
-	srv := httptest.NewServer(handler)
-
-	return srv
+// TestMockClient is a mock implementation of the client.Client interface
+type TestMockClient struct {
+	PostError   error
+	DeleteError error
+	GetError    error
+	PutError    error
 }
 
-func msTeamsMockMock(w http.ResponseWriter, r *http.Request) {
-	_, _ = w.Write([]byte("{\"id\":\"1\"}"))
+// Post is a mock implementation
+func (m *TestMockClient) Post(ctx context.Context, url url.URL, activity schema.Activity) error {
+	return m.PostError
 }
 
-type msTeamsActivityUpdateMock struct {
-	t *testing.T
+// Delete is a mock implementation
+func (m *TestMockClient) Delete(ctx context.Context, url url.URL) error {
+	return m.DeleteError
 }
 
-func (th *msTeamsActivityUpdateMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	assert.Equal(th.t, "PUT", r.Method, "Expect PUT method")
-	activity := schema.Activity{}
-	err := json.NewDecoder(r.Body).Decode(&activity)
-	assert.Equal(th.t, "TestLabel", activity.Label, "Expect PUT method")
-	assert.Nil(th.t, err, fmt.Sprintf("Failed with error %s", err))
-	_, _ = w.Write([]byte("{\"id\":\"1\"}"))
+// Get is a mock implementation
+func (m *TestMockClient) Get(ctx context.Context, url url.URL) (json.RawMessage, error) {
+	return json.RawMessage{}, m.GetError
 }
 
-// Create a handler that defines operations to be performed on respective events.
-// Following defines the operation to be performed on the 'message' event.
-var customHandler = activity.HandlerFuncs{
-	OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-		return turn.SendActivity(activity.MsgOptionText("Echo: " + turn.Activity.Text))
-	},
+// Put is a mock implementation
+func (m *TestMockClient) Put(ctx context.Context, url url.URL, activity schema.Activity) error {
+	return m.PutError
 }
 
-func TestExample(t *testing.T) {
-	srv := serverMock(t)
-	// activity depicts a request as received from a client
-	activity := schema.Activity{
-		Type: schema.Message,
-		From: schema.ChannelAccount{
-			ID:   "12345678",
-			Name: "Pepper's News Feed",
-		},
-		Conversation: schema.ConversationAccount{
-			ID:   "abcd1234",
-			Name: "Convo1",
-		},
-		Recipient: schema.ChannelAccount{
-			ID:   "1234abcd",
-			Name: "SteveW",
-		},
-		Text:       "Message from Teams Client",
-		ReplyToID:  "5d5cdc723",
-		ServiceURL: srv.URL,
+// createTestAdapter creates a test adapter with mock components
+func createTestAdapter() *BotFrameworkAdapter {
+	settings := AdapterSettings{
+		AppID:       "test-app-id",
+		AppPassword: "test-app-password",
 	}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := context.Background()
-		setting := core.AdapterSetting{
-			AppID:       "asdasd",
-			AppPassword: "cfg.MicrosoftTeams.AppPassword",
-		}
-		setting.CredentialProvider = auth.SimpleCredentialProvider{
-			AppID:    setting.AppID,
-			Password: setting.AppPassword,
-		}
-		clientConfig, err := client.NewClientConfig(setting.CredentialProvider, auth.ToChannelFromBotLoginURL[0])
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-		connectorClient, err := client.NewClient(clientConfig)
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-		adapter := core.BotFrameworkAdapter{setting, &core.MockTokenValidator{}, connectorClient}
-		act, err := adapter.ParseRequest(ctx, req)
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-		err = adapter.ProcessActivity(ctx, act, customHandler)
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	})
-	rr := httptest.NewRecorder()
-	bodyJSON, err := json.Marshal(activity)
-	assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	bodyBytes := bytes.NewReader(bodyJSON)
-	req, err := http.NewRequest(http.MethodPost, "/api/messages", bodyBytes)
-	assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	req.Header.Set("Authorization", "Bearer abc123")
-	handler.ServeHTTP(rr, req)
-	assert.Equal(t, rr.Code, 200, "Expect 200 response status")
-}
-
-func TestActivityUpdate(t *testing.T) {
-	srv := serverMock(t)
-
-	activity := schema.Activity{
-		Type: schema.Message,
-		From: schema.ChannelAccount{
-			ID:   "12345678",
-			Name: "Pepper's News Feed",
-		},
-		Conversation: schema.ConversationAccount{
-			ID:   "TestActivityUpdate",
-			Name: "Convo1",
-		},
-		Recipient: schema.ChannelAccount{
-			ID:   "1234abcd",
-			Name: "SteveW",
-		},
-		Text:       "Message from Teams Client",
-		ReplyToID:  "5d5cdc723",
-		ServiceURL: srv.URL,
+	settings.CredentialProvider = auth.SimpleCredentialProvider{
+		AppID:    settings.AppID,
+		Password: settings.AppPassword,
 	}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := context.Background()
-		setting := core.AdapterSetting{
-			AppID:       "asdasd",
-			AppPassword: "cfg.MicrosoftTeams.AppPassword",
-		}
-		setting.CredentialProvider = auth.SimpleCredentialProvider{
-			AppID:    setting.AppID,
-			Password: setting.AppPassword,
-		}
-		clientConfig, err := client.NewClientConfig(setting.CredentialProvider, auth.ToChannelFromBotLoginURL[0])
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-		connectorClient, err := client.NewClient(clientConfig)
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-		adapter := core.BotFrameworkAdapter{setting, &core.MockTokenValidator{}, connectorClient}
-		act, err := adapter.ParseRequest(ctx, req)
-		act.Label = "TestLabel"
-		err = adapter.UpdateActivity(ctx, act)
-		assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	})
-	rr := httptest.NewRecorder()
-	bodyJSON, err := json.Marshal(activity)
-	assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	bodyBytes := bytes.NewReader(bodyJSON)
-	req, err := http.NewRequest(http.MethodPost, "/api/messages", bodyBytes)
-	assert.Nil(t, err, fmt.Sprintf("Failed with error %s", err))
-	req.Header.Set("Authorization", "Bearer abc123")
-	handler.ServeHTTP(rr, req)
-	assert.Equal(t, rr.Code, 200, "Expect 200 response status")
+	adapter, _ := NewBotFrameworkAdapter(settings)
+	// Replace the token validator with our mock
+	adapter.TokenValidator = &MockTokenValidator{}
+	// Replace the client with our mock
+	adapter.Client = &TestMockClient{}
+
+	return adapter
+}
+
+// createTestActivity creates a test activity
+func createTestActivity() schema.Activity {
+	return schema.Activity{
+		Type: schema.Message,
+		From: schema.ChannelAccount{
+			ID:   "user1",
+			Name: "User One",
+		},
+		Recipient: schema.ChannelAccount{
+			ID:   "bot1",
+			Name: "Bot One",
+		},
+		Conversation: schema.ConversationAccount{
+			ID:   "conversation1",
+			Name: "Conversation One",
+		},
+		ChannelID:   "test-channel",
+		ServiceURL:  "https://test.com",
+		Text:        "Hello, Bot!",
+		InputHint:   schema.AcceptingInput,
+		Attachments: []schema.Attachment{},
+	}
+}
+
+// createTestRequest creates a test HTTP request with the given activity
+func createTestRequest(t *testing.T, activity schema.Activity) *http.Request {
+	activityJSON, err := json.Marshal(activity)
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/messages", bytes.NewBuffer(activityJSON))
+	assert.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	return req
+}
+
+// TestNewBotFrameworkAdapter tests the creation of a new adapter
+func TestNewBotFrameworkAdapter(t *testing.T) {
+	settings := AdapterSettings{
+		AppID:       "test-app-id",
+		AppPassword: "test-app-password",
+	}
+
+	adapter, err := NewBotFrameworkAdapter(settings)
+	assert.NoError(t, err)
+	assert.NotNil(t, adapter)
+	assert.Equal(t, settings.AppID, adapter.AppID)
+	assert.Equal(t, settings.AppPassword, adapter.AppPassword)
+	assert.NotNil(t, adapter.CredentialProvider)
+	assert.NotNil(t, adapter.TokenValidator)
+	assert.NotNil(t, adapter.Client)
+}
+
+// TestNewBotFrameworkAdapterWithCustomClients tests the creation of a new adapter with custom clients
+func TestNewBotFrameworkAdapterWithCustomClients(t *testing.T) {
+	customAuthClient := &http.Client{}
+	customReplyClient := &http.Client{}
+
+	settings := AdapterSettings{
+		AppID:       "test-app-id",
+		AppPassword: "test-app-password",
+		AuthClient:  customAuthClient,
+		ReplyClient: customReplyClient,
+	}
+
+	adapter, err := NewBotFrameworkAdapter(settings)
+	assert.NoError(t, err)
+	assert.NotNil(t, adapter)
+}
+
+// TestSendActivity tests the SendActivity method
+func TestSendActivity(t *testing.T) {
+	adapter := createTestAdapter()
+	activity := createTestActivity()
+
+	err := adapter.SendActivity(context.Background(), activity)
+	assert.NoError(t, err)
+}
+
+// TestSendActivityError tests the SendActivity method when the client returns an error
+func TestSendActivityError(t *testing.T) {
+	adapter := createTestAdapter()
+	// Override the client with one that returns an error
+	adapter.Client = &TestMockClient{PostError: errors.New("post error")}
+	activity := createTestActivity()
+
+	err := adapter.SendActivity(context.Background(), activity)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "post error")
+}
+
+// TestSendActivities tests the SendActivities method
+func TestSendActivities(t *testing.T) {
+	adapter := createTestAdapter()
+	activities := []schema.Activity{createTestActivity(), createTestActivity()}
+
+	err := adapter.SendActivities(context.Background(), activities)
+	assert.NoError(t, err)
+}
+
+// TestSendActivitiesEmpty tests the SendActivities method with an empty slice
+func TestSendActivitiesEmpty(t *testing.T) {
+	adapter := createTestAdapter()
+
+	err := adapter.SendActivities(context.Background(), []schema.Activity{})
+	assert.NoError(t, err)
+}
+
+// TestSendActivitiesError tests the SendActivities method when the client returns an error
+func TestSendActivitiesError(t *testing.T) {
+	adapter := createTestAdapter()
+	// Override the client with one that returns an error
+	adapter.Client = &TestMockClient{PostError: errors.New("post error")}
+	activities := []schema.Activity{createTestActivity()}
+
+	err := adapter.SendActivities(context.Background(), activities)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "post error")
+}
+
+// TestUpdateActivity tests the UpdateActivity method
+func TestUpdateActivity(t *testing.T) {
+	adapter := createTestAdapter()
+	activity := createTestActivity()
+	activity.ID = "activity1"
+
+	err := adapter.UpdateActivity(context.Background(), activity)
+	assert.NoError(t, err)
+}
+
+// TestUpdateActivityError tests the UpdateActivity method when the client returns an error
+func TestUpdateActivityError(t *testing.T) {
+	adapter := createTestAdapter()
+	// Override the client with one that returns an error
+	adapter.Client = &TestMockClient{PutError: errors.New("put error")}
+	activity := createTestActivity()
+	activity.ID = "activity1"
+
+	err := adapter.UpdateActivity(context.Background(), activity)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "put error")
+}
+
+// TestDeleteActivity tests the DeleteActivity method
+func TestDeleteActivity(t *testing.T) {
+	adapter := createTestAdapter()
+	conversationRef := schema.ConversationReference{
+		ActivityID:   "activity1",
+		Conversation: schema.ConversationAccount{ID: "conversation1"},
+		ServiceURL:   "https://test.com",
+	}
+
+	err := adapter.DeleteActivity(context.Background(), "activity1", conversationRef)
+	assert.NoError(t, err)
+}
+
+// TestDeleteActivityError tests the DeleteActivity method when the client returns an error
+func TestDeleteActivityError(t *testing.T) {
+	adapter := createTestAdapter()
+	// Override the client with one that returns an error
+	adapter.Client = &TestMockClient{DeleteError: errors.New("delete error")}
+	conversationRef := schema.ConversationReference{
+		ActivityID:   "activity1",
+		Conversation: schema.ConversationAccount{ID: "conversation1"},
+		ServiceURL:   "https://test.com",
+	}
+
+	err := adapter.DeleteActivity(context.Background(), "activity1", conversationRef)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "delete error")
 }

@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/infracloudio/msbotbuilder-go/core"
-	"github.com/infracloudio/msbotbuilder-go/core/activity"
-	"github.com/infracloudio/msbotbuilder-go/schema"
+	"github.com/phnallamothu/msbotbuilder-go/connector/auth"
+	"github.com/phnallamothu/msbotbuilder-go/connector/client"
+	"github.com/phnallamothu/msbotbuilder-go/core"
+	"github.com/phnallamothu/msbotbuilder-go/core/activity"
+	"github.com/phnallamothu/msbotbuilder-go/schema"
 )
 
 // Card content
@@ -53,48 +55,49 @@ var cardJSON = []byte(`{
 // conversationRef to store conversation reference to which proactive messages will be sent
 var conversationRef schema.ConversationReference
 
-var welcomeHandler = activity.HandlerFuncs{
-	OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-		return turn.SendActivity(activity.MsgOptionText("Welcome"))
-	},
+// Define handler functions that match the expected signatures
+var welcomeHandler = func(turn *activity.TurnContext) error {
+	_, err := turn.SendActivity(activity.WithText("Welcome"))
+	return err
 }
 
-var attachHandler = activity.HandlerFuncs{
-	OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-		var obj map[string]interface{}
-		err := json.Unmarshal(cardJSON, &obj)
-		if err != nil {
-			return schema.Activity{}, err
-		}
-		attachments := []schema.Attachment{
-			{
-				ContentType: "application/vnd.microsoft.card.adaptive",
-				Content:     obj,
-			},
-		}
-		return turn.SendActivity(activity.MsgOptionText("Sample attachment"), activity.MsgOptionAttachments(attachments))
-	},
+var attachHandler = func(turn *activity.TurnContext) error {
+	var obj map[string]interface{}
+	err := json.Unmarshal(cardJSON, &obj)
+	if err != nil {
+		return err
+	}
+	attachments := []schema.Attachment{
+		{
+			ContentType: "application/vnd.microsoft.card.adaptive",
+			Content:     obj,
+		},
+	}
+	_, err = turn.SendActivity(activity.WithText("Sample attachment"), activity.WithAttachments(attachments))
+	return err
 }
 
 // HTTPHandler handles the HTTP requests from then connector service
 type HTTPHandler struct {
-	core.Adapter
+	Adapter *core.BotFrameworkAdapter
 }
 
 func (ht *HTTPHandler) processMessage(w http.ResponseWriter, req *http.Request) {
+	// Process the activity directly using the request
+	// First, parse the request to get the conversation reference
 	ctx := context.Background()
 	act, err := ht.Adapter.ParseRequest(ctx, req)
-
-	// Set conversation reference
-	conversationRef = activity.GetCoversationReference(act)
-
 	if err != nil {
 		fmt.Println("Failed to parse request.", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	err = ht.Adapter.ProcessActivity(ctx, act, welcomeHandler)
+	// Set conversation reference
+	conversationRef = activity.GetCoversationReference(act)
+
+	// Process the activity
+	err = ht.Adapter.ProcessActivity(w, req, welcomeHandler)
 	if err != nil {
 		fmt.Println("Failed to process request.", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -106,7 +109,8 @@ func (ht *HTTPHandler) processMessage(w http.ResponseWriter, req *http.Request) 
 }
 
 func (ht *HTTPHandler) welcome() {
-	err := ht.Adapter.ProactiveMessage(context.TODO(), conversationRef, attachHandler)
+	ctx := context.Background()
+	err := ht.Adapter.ProactiveMessage(ctx, conversationRef, attachHandler)
 	if err != nil {
 		fmt.Println("Failed to send proactive message.", err)
 		return
@@ -115,14 +119,35 @@ func (ht *HTTPHandler) welcome() {
 }
 
 func main() {
-	setting := core.AdapterSetting{
+	// Create adapter settings
+	setting := core.AdapterSettings{
 		AppID:       os.Getenv("APP_ID"),
 		AppPassword: os.Getenv("APP_PASSWORD"),
 	}
 
-	adapter, err := core.NewBotAdapter(setting)
+	// Create credential provider
+	setting.CredentialProvider = auth.SimpleCredentialProvider{
+		AppID:    setting.AppID,
+		Password: setting.AppPassword,
+	}
+
+	// Create client config
+	clientConfig, err := client.NewClientConfig(setting.CredentialProvider, auth.ToChannelFromBotLoginURL[0])
 	if err != nil {
-		log.Fatal("Error creating adapter: ", err)
+		log.Fatal("Error creating client config: ", err)
+	}
+
+	// Create connector client
+	connectorClient, err := client.NewClient(clientConfig)
+	if err != nil {
+		log.Fatal("Error creating connector client: ", err)
+	}
+
+	// Create bot framework adapter
+	adapter := &core.BotFrameworkAdapter{
+		AdapterSettings: setting,
+		TokenValidator:  &core.MockTokenValidator{},
+		Client:          connectorClient,
 	}
 
 	httpHandler := &HTTPHandler{adapter}

@@ -1,6 +1,6 @@
 # Bot Framework attachment sample.
 
-This Microsoft Teams bot uses the [msbotbuilder-go](https://github.com/infracloudio/msbotbuilder-go) library. It shows how to create a simple bot that accepts input from the user and echoes response with an attachment.
+This Microsoft Teams bot uses the [msbotbuilder-go](https://github.com/phnallamothu/msbotbuilder-go) library. It shows how to create a simple bot that accepts input from the user and echoes response with an attachment.
 
 ## Run the example
 

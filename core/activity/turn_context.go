@@ -1,26 +1,7 @@
-// Copyright (c) 2020 InfraCloud Technologies
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 package activity
 
 import (
-	"github.com/infracloudio/msbotbuilder-go/schema"
+	"github.com/phnallamothu/msbotbuilder-go/schema"
 	"github.com/pkg/errors"
 )
 
@@ -29,17 +10,79 @@ import (
 //
 // The return value is Activity as provided by the client program, to be send to the connector service.
 type TurnContext struct {
-	Activity schema.Activity
+	Activity  schema.Activity
+	Responded bool
+	TurnState map[string]interface{}
+}
+
+// NewTurnContext creates a new TurnContext with the given activity
+func NewTurnContext(activity schema.Activity) *TurnContext {
+	return &TurnContext{
+		Activity:  activity,
+		Responded: false,
+		TurnState: make(map[string]interface{}),
+	}
 }
 
 // SendActivity sends an activity to user.
-// TODO: Change comment
 func (t *TurnContext) SendActivity(options ...MsgOption) (schema.Activity, error) {
 	activity, err := applyMsgOptions(schema.Activity{Type: schema.Message}, options...)
 	if err != nil {
 		return activity, errors.Wrap(err, "Failed to apply MsgOptions.")
 	}
+
+	// Mark that we've responded to this activity
+	t.Responded = true
+
 	return ApplyConversationReference(activity, GetCoversationReference(t.Activity), false), nil
+}
+
+// SendActivities sends multiple activities to user.
+func (t *TurnContext) SendActivities(activities []schema.Activity) ([]schema.Activity, error) {
+	if len(activities) == 0 {
+		return []schema.Activity{}, nil
+	}
+
+	resultActivities := make([]schema.Activity, len(activities))
+
+	for i, activity := range activities {
+		// Apply conversation reference
+		resultActivities[i] = ApplyConversationReference(activity, GetCoversationReference(t.Activity), false)
+	}
+
+	// Mark that we've responded to this activity
+	t.Responded = true
+
+	return resultActivities, nil
+}
+
+// UpdateActivity updates an existing activity.
+func (t *TurnContext) UpdateActivity(activity schema.Activity) (schema.Activity, error) {
+	// Apply conversation reference
+	updatedActivity := ApplyConversationReference(activity, GetCoversationReference(t.Activity), false)
+
+	return updatedActivity, nil
+}
+
+// DeleteActivity deletes an existing activity.
+func (t *TurnContext) DeleteActivity(activityID string) error {
+	// This is just a stub - actual implementation would depend on the connector
+	return nil
+}
+
+// GetConversationReference gets the conversation reference from the current activity.
+func (t *TurnContext) GetConversationReference() schema.ConversationReference {
+	return GetCoversationReference(t.Activity)
+}
+
+// SetTurnState sets a value in the turn state.
+func (t *TurnContext) SetTurnState(key string, value interface{}) {
+	t.TurnState[key] = value
+}
+
+// GetTurnState gets a value from the turn state.
+func (t *TurnContext) GetTurnState(key string) interface{} {
+	return t.TurnState[key]
 }
 
 func applyMsgOptions(activity schema.Activity, options ...MsgOption) (schema.Activity, error) {

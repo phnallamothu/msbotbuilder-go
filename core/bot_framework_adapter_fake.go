@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 
-	"github.com/infracloudio/msbotbuilder-go/connector/auth"
-	"github.com/infracloudio/msbotbuilder-go/schema"
+	"github.com/phnallamothu/msbotbuilder-go/connector/auth"
+	"github.com/phnallamothu/msbotbuilder-go/schema"
 )
 
 // All the mocks and stubs for BotFrameworkAdapter goes here.

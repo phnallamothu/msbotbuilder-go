@@ -1,6 +1,6 @@
 # Bot Framework File Upload Sample
 
-This Microsoft Teams bot example uses the [msbotbuilder-go](https://github.com/infracloudio/msbotbuilder-go) library. It shows how to handle `invoke` activity and upload local file from Bot to use.
+This Microsoft Teams bot example uses the [msbotbuilder-go](https://github.com/phnallamothu/msbotbuilder-go) library. It shows how to handle `invoke` activity and upload local file from Bot to use.
 
 As documented [here](https://developer.microsoft.com/en-us/microsoft-teams/blogs/working-with-files-in-your-microsoft-teams-bot/), following is the workflow for sending files from Bot to user:
 

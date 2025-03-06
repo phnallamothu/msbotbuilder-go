@@ -1,22 +1,3 @@
-// Copyright (c) 2020 InfraCloud Technologies
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 package core
 
 import (
@@ -24,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/infracloudio/msbotbuilder-go/connector/auth"
-	"github.com/infracloudio/msbotbuilder-go/connector/client"
-	"github.com/infracloudio/msbotbuilder-go/core/activity"
-	"github.com/infracloudio/msbotbuilder-go/schema"
+	"github.com/phnallamothu/msbotbuilder-go/connector/auth"
+	"github.com/phnallamothu/msbotbuilder-go/connector/client"
+	"github.com/phnallamothu/msbotbuilder-go/core/activity"
+	"github.com/phnallamothu/msbotbuilder-go/schema"
 	"github.com/pkg/errors"
 )
 
@@ -35,14 +16,16 @@ import (
 // the connector service.
 type Adapter interface {
 	ParseRequest(ctx context.Context, req *http.Request) (schema.Activity, error)
-	ProcessActivity(ctx context.Context, req schema.Activity, handler activity.Handler) error
-	ProactiveMessage(ctx context.Context, ref schema.ConversationReference, handler activity.Handler) error
+	ProcessActivity(w http.ResponseWriter, r *http.Request, handler func(*activity.TurnContext) error) error
+	ProactiveMessage(ctx context.Context, ref schema.ConversationReference, handler func(*activity.TurnContext) error) error
 	DeleteActivity(ctx context.Context, activityID string, ref schema.ConversationReference) error
 	UpdateActivity(ctx context.Context, activity schema.Activity) error
+	SendActivity(ctx context.Context, activity schema.Activity) error
+	SendActivities(ctx context.Context, activities []schema.Activity) error
 }
 
-// AdapterSetting is the configuration for the Adapter.
-type AdapterSetting struct {
+// AdapterSettings is the configuration for the Adapter.
+type AdapterSettings struct {
 	AppID              string
 	AppPassword        string
 	ChannelAuthTenant  string
@@ -56,17 +39,19 @@ type AdapterSetting struct {
 
 // BotFrameworkAdapter implements Adapter and is currently the only implementation returned to the user program.
 type BotFrameworkAdapter struct {
-	AdapterSetting
+	AdapterSettings
 	auth.TokenValidator
 	client.Client
 }
 
-// NewBotAdapter creates and reuturns a new BotFrameworkAdapter with the specified AdapterSettings.
-func NewBotAdapter(settings AdapterSetting) (Adapter, error) {
-	// TODO: Support other credential providers - OpenID, MicrosoftApp, Government
-	settings.CredentialProvider = auth.SimpleCredentialProvider{
-		AppID:    settings.AppID,
-		Password: settings.AppPassword,
+// NewBotFrameworkAdapter creates and returns a new BotFrameworkAdapter with the specified AdapterSettings.
+func NewBotFrameworkAdapter(settings AdapterSettings) (*BotFrameworkAdapter, error) {
+	// If no credential provider is specified, create a simple one
+	if settings.CredentialProvider == nil {
+		settings.CredentialProvider = auth.SimpleCredentialProvider{
+			AppID:    settings.AppID,
+			Password: settings.AppPassword,
+		}
 	}
 
 	if settings.ChannelService == "" {
@@ -97,44 +82,53 @@ func NewBotAdapter(settings AdapterSetting) (Adapter, error) {
 
 // ProcessActivity receives an activity, processes it as specified in by the 'handler' and
 // sends it to the connector service.
-func (bf *BotFrameworkAdapter) ProcessActivity(ctx context.Context, req schema.Activity, handler activity.Handler) error {
-	turnContext := &activity.TurnContext{
-		Activity: req,
-	}
+func (bf *BotFrameworkAdapter) ProcessActivity(w http.ResponseWriter, r *http.Request, handler func(*activity.TurnContext) error) error {
+	ctx := r.Context()
 
-	replyActivity, err := activity.PrepareActivityContext(handler, turnContext)
+	// Parse the request
+	activityRequest, err := bf.ParseRequest(ctx, r)
 	if err != nil {
-		return errors.Wrap(err, "Failed to create Activity context.")
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return errors.Wrap(err, "Failed to parse request.")
 	}
 
-	response, err := activity.NewActivityResponse(bf.Client)
+	// Create a new turn context
+	turnContext := activity.NewTurnContext(activityRequest)
+
+	// Process the activity
+	err = handler(turnContext)
 	if err != nil {
-		return errors.Wrap(err, "Failed to create response object.")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return errors.Wrap(err, "Handler returned an error.")
 	}
 
-	return response.SendActivity(ctx, replyActivity)
+	return nil
 }
 
 // ProactiveMessage sends activity to a conversation.
 // This methods is used for Bot initiated conversation.
-func (bf *BotFrameworkAdapter) ProactiveMessage(ctx context.Context, ref schema.ConversationReference, handler activity.Handler) error {
+func (bf *BotFrameworkAdapter) ProactiveMessage(ctx context.Context, ref schema.ConversationReference, handler func(*activity.TurnContext) error) error {
 	// Prepare activity with conversation reference
-	activity := activity.ApplyConversationReference(schema.Activity{Type: schema.Message}, ref, true)
-	return bf.ProcessActivity(ctx, activity, handler)
+	activityMsg := activity.ApplyConversationReference(schema.Activity{Type: schema.Message}, ref, true)
+	return bf.ProcessActivity(nil, nil, func(turnContext *activity.TurnContext) error {
+		turnContext.Activity = activityMsg
+		return handler(turnContext)
+	})
 }
 
 // DeleteActivity Deletes an existing activity by Activity ID
 func (bf *BotFrameworkAdapter) DeleteActivity(ctx context.Context, activityID string, ref schema.ConversationReference) error {
 	// Prepare activity with conversation reference
-	req := activity.ApplyConversationReference(schema.Activity{Type: schema.Message}, ref, true)
-	req.ID = activityID
+	activityMsg := activity.ApplyConversationReference(schema.Activity{Type: schema.Message}, ref, true)
+	activityMsg.ID = activityID
 
+	// Create a response object to handle the deletion
 	response, err := activity.NewActivityResponse(bf.Client)
 	if err != nil {
 		return errors.Wrap(err, "Failed to create response object.")
 	}
 
-	return response.DeleteActivity(ctx, req)
+	return response.DeleteActivity(ctx, activityMsg)
 }
 
 // ParseRequest parses the received activity in a HTTP reuqest to:
@@ -167,12 +161,43 @@ func (bf *BotFrameworkAdapter) authenticateRequest(ctx context.Context, req sche
 	return errors.Wrap(err, "Authentication failed.")
 }
 
-// UpdateActivity Updates an existing activity
-func (bf *BotFrameworkAdapter) UpdateActivity(ctx context.Context, req schema.Activity) error {
+// UpdateActivity updates an existing activity.
+func (bf *BotFrameworkAdapter) UpdateActivity(ctx context.Context, activityToUpdate schema.Activity) error {
 	response, err := activity.NewActivityResponse(bf.Client)
 
 	if err != nil {
 		return errors.Wrap(err, "Failed to create response object.")
 	}
-	return response.UpdateActivity(ctx, req)
+	return response.UpdateActivity(ctx, activityToUpdate)
+}
+
+// SendActivity sends an activity to the conversation referenced in the activity.
+func (bf *BotFrameworkAdapter) SendActivity(ctx context.Context, outgoingActivity schema.Activity) error {
+	response, err := activity.NewActivityResponse(bf.Client)
+	if err != nil {
+		return errors.Wrap(err, "Failed to create response object.")
+	}
+
+	return response.SendActivity(ctx, outgoingActivity)
+}
+
+// SendActivities sends multiple activities to the conversation referenced in the activities.
+func (bf *BotFrameworkAdapter) SendActivities(ctx context.Context, outgoingActivities []schema.Activity) error {
+	if len(outgoingActivities) == 0 {
+		return nil
+	}
+
+	response, err := activity.NewActivityResponse(bf.Client)
+	if err != nil {
+		return errors.Wrap(err, "Failed to create response object.")
+	}
+
+	for _, outAct := range outgoingActivities {
+		err := response.SendActivity(ctx, outAct)
+		if err != nil {
+			return errors.Wrap(err, "Failed to send activity.")
+		}
+	}
+
+	return nil
 }
